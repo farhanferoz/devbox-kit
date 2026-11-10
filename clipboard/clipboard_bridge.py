@@ -33,6 +33,7 @@ rather than line-framed.
 """
 
 import hmac
+import json
 import os
 import pathlib
 import platform
@@ -46,9 +47,11 @@ import tempfile
 import threading
 import time
 from enum import StrEnum
+from urllib.parse import unquote, urlsplit
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 18377
+MACOS_HELPER_PATH = pathlib.Path.home() / ".local/lib/clipboard-bridge/macos-clipboard-helper"
 TOKEN_PATH = pathlib.Path.home() / ".config" / "clipboard-bridge" / "token"
 TOOL_DEADLINE_S = 10
 MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
@@ -66,21 +69,6 @@ SHUTDOWN_JOIN_S = 20
 # and a caller may hand that straight back to us. Space is the header delimiter, so it is
 # the one character a MIME type may not contain here.
 VALID_MIME = re.compile(r"^[A-Za-z0-9!#$&^_.+-]{1,64}/[A-Za-z0-9!#$&^_.+;=-]{1,96}$")
-
-# macOS names pasteboard flavours in AppleScript terms, not MIME. Only the flavours the
-# tools we serve actually ask for are mapped; anything else is reported as-is and simply
-# will not match a caller's request, which is the correct outcome.
-MACOS_FLAVOURS = (
-    ("PNGf", PNG_MIME),
-    ("PNG picture", PNG_MIME),
-    ("TIFF picture", "image/tiff"),
-    ("JPEG picture", "image/jpeg"),
-    ("GIF picture", "image/gif"),
-    ("utf8", TEXT_MIME),
-    ("Unicode text", TEXT_MIME),
-    ("string", TEXT_MIME),
-)
-
 
 class Verb(StrEnum):
     """The closed set of requests a shim may make."""
@@ -142,10 +130,14 @@ def run_tool(args: list[str], payload: bytes | None = None, *, capture: bool = T
         A tuple of the exit status and the captured stdout bytes, empty when not captured.
     """
     sink = subprocess.PIPE if capture else subprocess.DEVNULL
+    started = time.monotonic()
+    print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} started", file=sys.stderr, flush=True)
     try:
         done = subprocess.run(args, input=payload, stdout=sink, stderr=sink, check=False, timeout=TOOL_DEADLINE_S)
     except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} failed after {time.monotonic()-started:.2f}s", file=sys.stderr, flush=True)
         return 1, str(exc).encode("utf-8", "replace")
+    print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} exited {done.returncode} after {time.monotonic()-started:.2f}s", file=sys.stderr, flush=True)
     return done.returncode, done.stdout or b""
 
 
@@ -161,25 +153,95 @@ def run_osascript(script: str) -> tuple[int, bytes]:
     return run_tool(["osascript", "-"], payload=script.encode("utf-8"))
 
 
+def macos_metadata(kind: str, fallback_script: str) -> tuple[int, bytes]:
+    """Use a native pasteboard reader; keep JXA for older installations."""
+    if MACOS_HELPER_PATH.is_file():
+        return run_tool([str(MACOS_HELPER_PATH), kind])
+    return run_tool(["osascript", "-l", "JavaScript", "-"], payload=fallback_script.encode())
+
+
+def macos_file_urls() -> tuple[int, list[str]]:
+    """Read explicit copied file references, never interpret clipboard text as a path."""
+    script = '''ObjC.import("AppKit");
+var items=$.NSPasteboard.generalPasteboard.pasteboardItems, urls=[];
+for(var i=0; i<items.count; i++) {
+    var url=ObjC.unwrap(items.objectAtIndex(i).stringForType("public.file-url"));
+    if(url) urls.push(url);
+}
+JSON.stringify(urls);'''
+    status, out = macos_metadata("file-urls", script)
+    try:
+        urls = json.loads(out)
+        if status or not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+            return 1, []
+        return 0, urls
+    except (ValueError, UnicodeError):
+        return 1, []
+
+
+def copied_image_path(urls: list[str]) -> pathlib.Path | None:
+    """Accept one local image explicitly copied by the user."""
+    if len(urls) != 1:
+        return None
+    url = urlsplit(urls[0])
+    if url.scheme != "file" or url.netloc not in ("", "localhost") or not url.path.startswith("/"):
+        return None
+    path = pathlib.Path(unquote(url.path))
+    image_extensions = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".heic", ".heif", ".webp", ".bmp", ".avif", ".jp2"}
+    return path if path.suffix.lower() in image_extensions and path.is_file() else None
+
+
 def macos_list_types() -> tuple[int, bytes]:
     """List the clipboard's flavours on macOS, translated to MIME types.
 
     Returns:
         A tuple of the exit status and newline-separated MIME types.
     """
-    status, out = run_osascript("clipboard info")
+    # AppleScript's `clipboard info` asks for data sizes and materializes lazy
+    # Finder representations (including costly image conversions). Only query
+    # NSPasteboard's type names: discovery must not read every clipboard format.
+    script = 'ObjC.import("AppKit"); JSON.stringify(ObjC.deepUnwrap($.NSPasteboard.generalPasteboard.types) || [])'
+    status, out = macos_metadata("types", script)
     if status != 0:
         return status, b""
-    described = out.decode("utf-8", "replace")
-    found = [mime for marker, mime in MACOS_FLAVOURS if marker in described]
+    try:
+        types = json.loads(out)
+        if not isinstance(types, list) or not all(isinstance(t, str) for t in types):
+            return 1, b""
+    except (ValueError, UnicodeError):
+        return 1, b""
+    formats = {
+        "public.png": PNG_MIME,
+        "public.tiff": "image/tiff",
+        "public.jpeg": "image/jpeg",
+        "com.compuserve.gif": "image/gif",
+        "public.utf8-plain-text": TEXT_MIME,
+        "public.utf16-external-plain-text": TEXT_MIME,
+        "NSStringPboardType": TEXT_MIME,
+        "NeXT TIFF v4.0 pasteboard type": "image/tiff",
+    }
+    found = [formats[t] for t in types if t in formats]
+    if "public.file-url" in types:
+        status, urls = macos_file_urls()
+        if status:
+            return 1, b""
+        # Finder also offers a TIFF/PNG of its generic file icon. Advertise only
+        # formats derived from the referenced file, never that icon.
+        found = [mime for mime in found if not mime.startswith("image/")]
+        if copied_image_path(urls) is not None:
+            found.insert(0, PNG_MIME)
+    # pngpaste decodes TIFF/JPEG too, so advertise the PNG that callers can read.
+    # Finder often initially offers only TIFF plus its file URL.
+    if any(mime.startswith("image/") for mime in found) and shutil.which("pngpaste"):
+        found.insert(0, PNG_MIME)
     return 0, ("\n".join(dict.fromkeys(found)) + "\n").encode("utf-8")
 
 
 def macos_read(mime: str) -> tuple[int, bytes]:
     """Read one flavour off the macOS pasteboard.
 
-    `pbpaste` handles text only, so images go through `pngpaste` when it is installed and
-    otherwise through AppleScript, which can only deliver bytes by writing them to a file.
+    Finder file references take precedence over the generic icon on its pasteboard.
+    Ordinary pixel copies use pngpaste, or AppleScript on older installations.
 
     Args:
         mime: The MIME type wanted.
@@ -191,6 +253,28 @@ def macos_read(mime: str) -> tuple[int, bytes]:
         return run_tool(["pbpaste"])
     if mime != PNG_MIME:
         return 1, b""
+    status, urls = macos_file_urls()
+    if status:
+        return 1, b""
+    if urls:
+        path = copied_image_path(urls)
+        if path is None:
+            return 1, b""
+        try:
+            if path.stat().st_size > MAX_PAYLOAD_BYTES:
+                return 1, b""
+            if path.suffix.lower() == ".png":
+                data = path.read_bytes()
+                return (0, data) if data.startswith(b"\x89PNG\r\n\x1a\n") else (1, b"")
+            with tempfile.TemporaryDirectory(prefix="devbox-photo-") as scratch:
+                output = pathlib.Path(scratch) / "photo.png"
+                status, _ = run_tool(["/usr/bin/sips", "-s", "format", "png", str(path), "--out", str(output)])
+                if status or not output.is_file() or output.stat().st_size > MAX_PAYLOAD_BYTES:
+                    return 1, b""
+                data = output.read_bytes()
+                return (0, data) if data.startswith(b"\x89PNG\r\n\x1a\n") else (1, b"")
+        except OSError:
+            return 1, b""
     if shutil.which("pngpaste"):
         return run_tool(["pngpaste", "-"])
     with tempfile.NamedTemporaryFile(suffix=".png") as scratch:

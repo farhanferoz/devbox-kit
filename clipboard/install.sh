@@ -45,6 +45,18 @@ for arg in "$@"; do
 done
 [ -n "$REMOTE_HOST" ] || { echo "usage: $0 <ssh-host> [--selftest | --verify]   (or set REMOTE_SESSION_HOST)" >&2; exit 2; }
 
+# StrEnum is used by both clipboard programs. Prefer a suitable interpreter on
+# PATH, then Homebrew; Apple's bundled Python 3.9 cannot run the bridge.
+PYTHON_BIN=""
+for candidate in "$(command -v python3 || true)" /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' 2>/dev/null; then
+        PYTHON_BIN="$candidate"
+        break
+    fi
+done
+[ -n "$PYTHON_BIN" ] || { echo "[ERROR] Python 3.11 or newer is required (macOS: brew install python)." >&2; exit 1; }
+export PATH="$(dirname "$PYTHON_BIN"):$PATH"
+
 # macOS has no sha256sum and no `readlink -f`; keep every step portable.
 hash_of() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:12])' "$1"; }
 # render SED_SCRIPT TEMPLATE OUTPUT: fill a template and refuse to install one with a
@@ -58,6 +70,12 @@ render() {
 # so it is safe to run unattended from the daily updater. Returns 1 on any failure.
 roundtrip_checks() {
     local backend="$1" host="$2" rc=0
+    if [ "$backend" = "macos" ]; then
+        # pbpaste/pbcopy can restore only text and would replace a copied Finder
+        # file or screenshot. The native test preserves every pasteboard item.
+        xcrun swift "${REPO_DIR}/tests/test_macos_clipboard.swift" "$host"
+        return $?
+    fi
     local saved_prim probe pprobe got pgot xgot wprobe werr still perr clipfile clipmime
     perr=$(mktemp); clipfile=$(mktemp)
     saved_prim=""; clipmime=""
@@ -169,6 +187,12 @@ echo ">>> 1. Checking this machine has a clipboard we can serve..."
 command -v python3 >/dev/null || { echo "[ERROR] python3 is required (on macOS: xcode-select --install)" >&2; exit 1; }
 BACKEND="$("${REPO_DIR}/clipboard_bridge.py" --backend)"
 echo "    backend: ${BACKEND}"
+if [ "$BACKEND" = "macos" ]; then
+    command -v xcrun >/dev/null && xcrun --find swiftc >/dev/null 2>&1 \
+        || { echo "[ERROR] Apple Command Line Tools are required: xcode-select --install" >&2; exit 1; }
+    [ -f "${REPO_DIR}/macos_clipboard.swift" ] \
+        || { echo "[ERROR] missing macos_clipboard.swift; update the complete repo before installing." >&2; exit 1; }
+fi
 
 echo ">>> 2. Generating the shared token (never printed)..."
 if [ -s "$TOKEN_FILE" ]; then
@@ -188,6 +212,10 @@ if [ "$BACKEND" = "macos" ]; then
     LABEL="io.github.devbox-kit.clipboard-bridge"
     PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
     mkdir -p "$LIB_DIR" "$(dirname "$PLIST")" "${HOME}/Library/Logs"
+    # Build before replacing the installed bridge so a compiler failure leaves
+    # the existing service snapshot intact.
+    xcrun swiftc -O "${REPO_DIR}/macos_clipboard.swift" -o "${LIB_DIR}/macos-clipboard-helper.new"
+    mv "${LIB_DIR}/macos-clipboard-helper.new" "${LIB_DIR}/macos-clipboard-helper"
     cp "${REPO_DIR}/clipboard_bridge.py" "${LIB_DIR}/clipboard_bridge.py"
     chmod 755 "${LIB_DIR}/clipboard_bridge.py"
     render "s#@LABEL@#${LABEL}#g; s#@PYTHON@#$(command -v python3)#g; s#@BRIDGE_DIR@#${LIB_DIR}#g; s#@LOG@#${HOME}/Library/Logs/devbox-kit-clipboard-bridge.log#g" \
