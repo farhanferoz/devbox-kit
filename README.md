@@ -39,8 +39,9 @@ one that fails and read that tool's "When it does not work" section.
    ```
    Check: it ends with `REAL AUDIO`.
 
-The macOS half of steps 4 and 5 has not yet been run on a real Mac. If you run it there,
-please open an issue with the full output of both steps, pass or fail.
+The macOS clipboard path has been verified on Apple Silicon against Ubuntu x86_64,
+including Finder-copied JPEG/PNG photos and screenshots. The macOS voice installer still
+needs a real-Mac verification run; please report its output, pass or fail.
 
 ## Conventions
 
