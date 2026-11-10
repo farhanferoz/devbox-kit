@@ -48,17 +48,23 @@ with no password prompt:
 
 ```
 Host mybox
-    HostName 192.0.2.10        # the box's address or DNS name (Tailscale names work)
+    # the box's address or DNS name (a Tailscale name works too)
+    HostName 192.0.2.10
     User yourname
-    ServerAliveInterval 30     # notice a dead link in about a minute and a half
+    # notice a dead link within about 90 seconds (30 s x 3 missed replies)
+    ServerAliveInterval 30
     ServerAliveCountMax 3
 ```
 
-Nothing else is installed on the connecting machine: only `ssh`.
+Check: `ssh mybox hostname` prints the box's hostname without asking for a password.
+That printed name is what `REMOTE_SESSION_SERVER` needs in step 3.
+
+Apart from this repo (step 3), the connecting machine needs only `ssh`.
 
 ## 3. Load the command (connecting machines AND the box itself)
 
-Clone this repo, then add to `~/.bashrc` (Linux) or `~/.zshrc` (macOS):
+Clone this repo (the lines below assume `~/dev/devbox-kit`; change the path if you put
+it elsewhere), then add to `~/.bashrc` (Linux) or `~/.zshrc` (macOS):
 
 ```bash
 export REMOTE_SESSION_HOST=mybox        # the ssh alias from step 2
@@ -69,6 +75,9 @@ alias box=remote_session
 
 On the box itself the same lines work: when `hostname` matches
 `REMOTE_SESSION_SERVER`, commands run locally instead of over ssh.
+
+Open a new terminal (or `source ~/.bashrc`), then check: `box help` prints the command
+list, `box ls` prints a `NAME STATUS` header, and `box` opens the session `main`.
 
 ## Notes
 
