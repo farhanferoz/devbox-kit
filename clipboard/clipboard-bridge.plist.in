@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- devbox-kit clipboard bridge (macOS): serves this Mac's clipboard on 127.0.0.1:18377 to the box,
+     through the reverse tunnel ../tunnels keeps up. Written by clipboard/install.sh. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@LABEL@</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@PYTHON@</string>
+        <string>@BRIDGE_DIR@/clipboard_bridge.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd's default PATH has no Homebrew, where pngpaste lives. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>StandardErrorPath</key>
+    <string>@LOG@</string>
+    <key>StandardOutPath</key>
+    <string>@LOG@</string>
+</dict>
+</plist>

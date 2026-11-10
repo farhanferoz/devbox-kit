@@ -1,0 +1,10 @@
+[Unit]
+Description=Verify the clipboard bridge still works end to end
+Documentation=file://@BRIDGE_DIR@/README.md
+
+[Service]
+Type=oneshot
+# Nothing else notices when a Claude Code update changes the commands it shells out to for a
+# paste, or when the two ends drift apart. This runs the real round trip daily and shouts on
+# the desktop if it stops working, instead of the owner discovering it by middle-clicking.
+ExecStart=/bin/sh -c '@REPO_DIR@/install.sh @HOST@ --verify || { notify-send -u critical "Clipboard bridge is broken" "Copy/paste to @HOST@ failed its daily check. Run: @REPO_DIR@/install.sh @HOST@ --selftest"; exit 1; }'

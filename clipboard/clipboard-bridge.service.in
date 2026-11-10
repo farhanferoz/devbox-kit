@@ -1,0 +1,13 @@
+[Unit]
+Description=Clipboard bridge (socket-activated; exits when idle)
+Documentation=file://@BRIDGE_DIR@/README.md
+Requires=clipboard-bridge.socket
+After=clipboard-bridge.socket
+
+[Service]
+Type=simple
+ExecStart=@BRIDGE_DIR@/clipboard_bridge.py --systemd
+# The socket must never stop listening: a configured RemoteForward with no listener makes
+# ssh scribble "connect_to ... failed" into whatever full-screen program is running.
+Restart=on-failure
+RestartSec=2

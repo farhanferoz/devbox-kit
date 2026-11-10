@@ -1,0 +1,10 @@
+[Unit]
+Description=Clipboard bridge socket (serves this machine's clipboard to remote SSH sessions)
+Documentation=file://@BRIDGE_DIR@/README.md
+
+[Socket]
+ListenStream=127.0.0.1:@PORT@
+Accept=no
+
+[Install]
+WantedBy=sockets.target

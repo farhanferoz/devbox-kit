@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- devbox-kit: reverse SSH tunnels to @HOST@ (clipboard and microphone bridges).
+     The macOS counterpart of ssh-tunnels@.service: launchd keeps one ssh connection up that carries
+     every forward, restarts it when it exits (ExitOnForwardFailure, a dead link), and starts it at login. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@LABEL@</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/ssh</string>
+        <string>-N</string>
+        <string>-T</string>
+        <string>-o</string><string>BatchMode=yes</string>
+        <string>-o</string><string>ExitOnForwardFailure=yes</string>
+        <string>-o</string><string>ServerAliveInterval=15</string>
+        <string>-o</string><string>ServerAliveCountMax=3</string>
+        <string>-o</string><string>ControlMaster=no</string>
+        <string>-o</string><string>ControlPath=none</string>
+        <string>-o</string><string>ForwardAgent=no</string>
+@FORWARDS@
+        <string>@HOST@</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- Retry every 10 s: the box may hold the old ports for a while after a sleep or network change. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardErrorPath</key>
+    <string>@LOG@</string>
+</dict>
+</plist>

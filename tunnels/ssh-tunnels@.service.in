@@ -1,0 +1,18 @@
+[Unit]
+Description=Reverse SSH tunnels to %i (devbox-kit: clipboard and microphone bridges)
+# Never give up: after a reboot, a wake or a network change the box can hold the old ports until
+# its sshd notices the dead connection, and every refused start in that time must be retried.
+StartLimitIntervalSec=0
+
+[Service]
+# FORWARDS="-R 127.0.0.1:P:127.0.0.1:P ...", written by tunnels/install.sh from %i.ports.
+EnvironmentFile=%h/.config/devbox-kit/tunnels/%i.env
+# ExitOnForwardFailure: a connection without its tunnels is worthless, so quit and retry instead of
+# sitting connected and useless. ServerAlive: a dead link (wake, Wi-Fi change) is noticed within 45 s.
+# Options given here win over ~/.ssh/config.
+ExecStart=/usr/bin/ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none -o ForwardAgent=no $FORWARDS %i
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

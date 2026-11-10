@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily clipboard bridge check
+
+[Timer]
+OnCalendar=*-*-* 09:45:00
+# Catch up if the machine was asleep at 09:45.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
