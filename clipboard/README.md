@@ -112,6 +112,11 @@ so the same `box` session follows you between machines.
 - Linux bridge: `systemctl --user status clipboard-bridge.socket`. macOS:
   `launchctl print gui/$(id -u)/io.github.devbox-kit.clipboard-bridge`,
   `~/Library/Logs/devbox-kit-clipboard-bridge.log`.
+- If a Finder photo in Desktop, Documents, or Downloads cannot be read, check macOS
+  *System Settings → Privacy & Security → Files and Folders* permissions for the Python
+  interpreter named in the launchd plist. Permission failures are logged without the photo path.
+- Set `CLIPBOARD_BRIDGE_DEBUG=1` in the bridge service environment for per-tool timing logs.
+  Normal requests do not emit these verbose timings.
 - With the machine asleep or the tunnel down, the stand-ins fail in about 25 ms with one line
   on stderr, so Claude Code falls back instead of hanging.
 

@@ -41,6 +41,7 @@ import re
 import shutil
 import socket
 import socketserver
+import stat
 import subprocess
 import sys
 import tempfile
@@ -131,13 +132,16 @@ def run_tool(args: list[str], payload: bytes | None = None, *, capture: bool = T
     """
     sink = subprocess.PIPE if capture else subprocess.DEVNULL
     started = time.monotonic()
-    print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} started", file=sys.stderr, flush=True)
+    debug = os.environ.get("CLIPBOARD_BRIDGE_DEBUG") == "1"
+    if debug:
+        print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} started", file=sys.stderr, flush=True)
     try:
         done = subprocess.run(args, input=payload, stdout=sink, stderr=sink, check=False, timeout=TOOL_DEADLINE_S)
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} failed after {time.monotonic()-started:.2f}s", file=sys.stderr, flush=True)
         return 1, str(exc).encode("utf-8", "replace")
-    print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} exited {done.returncode} after {time.monotonic()-started:.2f}s", file=sys.stderr, flush=True)
+    if debug:
+        print(f"[clipboard-bridge] {pathlib.Path(args[0]).name} exited {done.returncode} after {time.monotonic()-started:.2f}s", file=sys.stderr, flush=True)
     return done.returncode, done.stdout or b""
 
 
@@ -166,7 +170,10 @@ def macos_file_urls() -> tuple[int, list[str]]:
 var items=$.NSPasteboard.generalPasteboard.pasteboardItems, urls=[];
 for(var i=0; i<items.count; i++) {
     var url=ObjC.unwrap(items.objectAtIndex(i).stringForType("public.file-url"));
-    if(url) urls.push(url);
+    if(url) {
+        var resolved=$.NSURL.URLWithString(url).filePathURL;
+        urls.push(ObjC.unwrap(resolved.absoluteString) || url);
+    }
 }
 JSON.stringify(urls);'''
     status, out = macos_metadata("file-urls", script)
@@ -183,12 +190,20 @@ def copied_image_path(urls: list[str]) -> pathlib.Path | None:
     """Accept one local image explicitly copied by the user."""
     if len(urls) != 1:
         return None
-    url = urlsplit(urls[0])
-    if url.scheme != "file" or url.netloc not in ("", "localhost") or not url.path.startswith("/"):
+    try:
+        url = urlsplit(urls[0])
+        if url.scheme != "file" or url.netloc not in ("", "localhost") or not url.path.startswith("/"):
+            return None
+        path = pathlib.Path(unquote(url.path))
+        image_extensions = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".heic", ".heif", ".webp", ".bmp", ".avif", ".jp2"}
+        if path.suffix.lower() not in image_extensions:
+            return None
+        return path if stat.S_ISREG(path.stat().st_mode) else None
+    except PermissionError:
+        print("[clipboard-bridge] copied photo is not readable; check macOS Files and Folders permissions for the bridge's Python interpreter", file=sys.stderr, flush=True)
         return None
-    path = pathlib.Path(unquote(url.path))
-    image_extensions = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".heic", ".heif", ".webp", ".bmp", ".avif", ".jp2"}
-    return path if path.suffix.lower() in image_extensions and path.is_file() else None
+    except (OSError, ValueError):
+        return None
 
 
 def macos_list_types() -> tuple[int, bytes]:
@@ -273,6 +288,9 @@ def macos_read(mime: str) -> tuple[int, bytes]:
                     return 1, b""
                 data = output.read_bytes()
                 return (0, data) if data.startswith(b"\x89PNG\r\n\x1a\n") else (1, b"")
+        except PermissionError:
+            print("[clipboard-bridge] cannot read copied photo; check macOS Files and Folders permissions for the bridge's Python interpreter", file=sys.stderr, flush=True)
+            return 1, b""
         except OSError:
             return 1, b""
     if shutil.which("pngpaste"):

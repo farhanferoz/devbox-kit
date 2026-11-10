@@ -90,7 +90,6 @@ roundtrip_checks() {
         x11)     clipmime=$(xclip -selection clipboard -t TARGETS -o 2>/dev/null | grep -m1 "/" || true)
                  [ -n "$clipmime" ] && xclip -selection clipboard -t "$clipmime" -o > "$clipfile" 2>/dev/null
                  saved_prim=$(xclip -selection primary -o 2>/dev/null || true) ;;
-        macos)   pbpaste > "$clipfile" 2>/dev/null || true ;;
     esac
 
     probe="clipboard-bridge-$(date +%s)"
@@ -100,7 +99,6 @@ roundtrip_checks() {
                  printf '%s' "$pprobe" | wl-copy --primary --type text/plain >/dev/null 2>&1 ;;
         x11)     printf '%s' "$probe"  | xclip -selection clipboard >/dev/null 2>&1
                  printf '%s' "$pprobe" | xclip -selection primary   >/dev/null 2>&1 ;;
-        macos)   printf '%s' "$probe"  | pbcopy ;;
     esac
 
     # shellcheck disable=SC2016  # $HOME/$PATH must expand on the remote host.
@@ -147,7 +145,6 @@ roundtrip_checks() {
                  if [ -n "$saved_prim" ]; then printf '%s' "$saved_prim" | wl-copy --primary --type text/plain >/dev/null 2>&1; else wl-copy --primary --clear >/dev/null 2>&1 || true; fi ;;
         x11)     if [ -s "$clipfile" ]; then xclip -selection clipboard -t "$clipmime" -i "$clipfile" >/dev/null 2>&1; fi
                  printf '%s' "$saved_prim" | xclip -selection primary >/dev/null 2>&1 ;;
-        macos)   pbcopy < "$clipfile" ;;
     esac
     rm -f "$perr" "$clipfile"
     return $rc
@@ -166,6 +163,15 @@ drift_check() {
     if [ -f "${LIB_DIR}/clipboard_bridge.py" ]; then have_bridge=$(hash_of "${LIB_DIR}/clipboard_bridge.py"); else have_bridge=MISSING; fi
     if [ "$want_bridge" = "$have_bridge" ]; then echo "    PASS - installed bridge matches this repo (${want_bridge})"
     else echo "    FAIL - installed bridge is ${have_bridge}, repo is ${want_bridge}: re-run without --verify" >&2; rc=1; fi
+    if [ "$(uname -s)" = "Darwin" ]; then
+        local want_helper have_helper=MISSING
+        want_helper=$(hash_of "${REPO_DIR}/macos_clipboard.swift")
+        if [ -f "${LIB_DIR}/macos_clipboard.swift" ] && [ -x "${LIB_DIR}/macos-clipboard-helper" ]; then
+            have_helper=$(hash_of "${LIB_DIR}/macos_clipboard.swift")
+        fi
+        if [ "$want_helper" = "$have_helper" ]; then echo "    PASS - installed native helper matches this repo (${want_helper})"
+        else echo "    FAIL - native helper is ${have_helper}, repo is ${want_helper}: re-run without --verify" >&2; rc=1; fi
+    fi
     return $rc
 }
 
@@ -184,7 +190,6 @@ if [ "$VERIFY" = "yes" ]; then
 fi
 
 echo ">>> 1. Checking this machine has a clipboard we can serve..."
-command -v python3 >/dev/null || { echo "[ERROR] python3 is required (on macOS: xcode-select --install)" >&2; exit 1; }
 BACKEND="$("${REPO_DIR}/clipboard_bridge.py" --backend)"
 echo "    backend: ${BACKEND}"
 if [ "$BACKEND" = "macos" ]; then
@@ -216,6 +221,7 @@ if [ "$BACKEND" = "macos" ]; then
     # the existing service snapshot intact.
     xcrun swiftc -O "${REPO_DIR}/macos_clipboard.swift" -o "${LIB_DIR}/macos-clipboard-helper.new"
     mv "${LIB_DIR}/macos-clipboard-helper.new" "${LIB_DIR}/macos-clipboard-helper"
+    cp "${REPO_DIR}/macos_clipboard.swift" "${LIB_DIR}/macos_clipboard.swift"
     cp "${REPO_DIR}/clipboard_bridge.py" "${LIB_DIR}/clipboard_bridge.py"
     chmod 755 "${LIB_DIR}/clipboard_bridge.py"
     render "s#@LABEL@#${LABEL}#g; s#@PYTHON@#$(command -v python3)#g; s#@BRIDGE_DIR@#${LIB_DIR}#g; s#@LOG@#${HOME}/Library/Logs/devbox-kit-clipboard-bridge.log#g" \

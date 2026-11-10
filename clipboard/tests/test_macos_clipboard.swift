@@ -49,10 +49,10 @@ func verify() throws {
     let pasted = try ssh("~/.local/bin/wl-paste --type image/png")
     guard let received = NSBitmapImageRep(data: pasted), received.pixelsWide == 2, received.pixelsHigh == 2,
         let color = received.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB), color.redComponent > 0.9 else { throw NSError(domain: "PNG round trip mismatch", code: 1) }
-    print("PASS: PNG image reaches M5 with matching dimensions and pixel data")
+    print("PASS: PNG image reaches remote with matching dimensions and pixel data")
     _ = try ssh("printf %s devbox-text-roundtrip | ~/.local/bin/wl-copy")
     guard board.string(forType: .string) == "devbox-text-roundtrip" else { throw NSError(domain: "Text copy mismatch", code: 1) }
-    print("PASS: M5 text reaches Mac clipboard")
+    print("PASS: Remote text reaches Mac clipboard")
     // Finder can offer a generic icon as PNG/TIFF alongside its real file URL.
     // Deliberately use a red 2x2 icon for a blue 37x19 photo so an icon cannot pass.
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -10,6 +10,11 @@ bridge=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 
+@pytest.fixture(autouse=True)
+def isolated_native_helper(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, 'MACOS_HELPER_PATH', tmp_path/'not-installed')
+
+
 def test_finder_tiff_advertises_png_conversion_without_reading_image(monkeypatch):
     run=Mock(return_value=(0,json.dumps(['public.tiff','public.utf8-plain-text']).encode()))
     monkeypatch.setattr(bridge,'run_tool',run)
@@ -104,3 +109,17 @@ def test_finder_advertises_actual_photo_not_icon_formats(monkeypatch,tmp_path):
     monkeypatch.setattr(bridge,'run_tool',lambda *args,**kwargs:(0,b'["public.file-url","public.tiff","public.utf8-plain-text"]'))
     # sips can convert the actual file without pngpaste. The icon's TIFF is omitted.
     assert bridge.macos_list_types()==(0,b'image/png\ntext/plain\n')
+
+
+def test_copied_photo_permission_failure_is_explicit_and_private(monkeypatch,capsys):
+    def denied(self): raise PermissionError('private filename')
+    monkeypatch.setattr(Path,'stat',denied)
+    assert bridge.copied_image_path(['file:///private/photo.jpg']) is None
+    error=capsys.readouterr().err
+    assert 'Files and Folders' in error
+    assert 'private filename' not in error
+    assert '/private/photo.jpg' not in error
+
+
+def test_malformed_copied_file_url_fails_cleanly():
+    assert bridge.copied_image_path(['file://[bad/photo.jpg']) is None
