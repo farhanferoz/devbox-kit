@@ -47,6 +47,12 @@ done
 
 # macOS has no sha256sum and no `readlink -f`; keep every step portable.
 hash_of() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:12])' "$1"; }
+# render SED_SCRIPT TEMPLATE OUTPUT: fill a template and refuse to install one with a
+# placeholder left over (a unit with a literal @HOST@ in it fails only when it fires).
+render() {
+    sed "$1" "$2" > "$3"
+    if grep -qE '@[A-Z_]+@' "$3"; then echo "[ERROR] unfilled placeholder in $3: $(grep -oE '@[A-Z_]+@' "$3" | sort -u | tr '\n' ' ')" >&2; exit 1; fi
+}
 
 # Reads both selections, proves a remote round trip on each, and puts them back. Non-destructive
 # so it is safe to run unattended from the daily updater. Returns 1 on any failure.
@@ -184,8 +190,8 @@ if [ "$BACKEND" = "macos" ]; then
     mkdir -p "$LIB_DIR" "$(dirname "$PLIST")" "${HOME}/Library/Logs"
     cp "${REPO_DIR}/clipboard_bridge.py" "${LIB_DIR}/clipboard_bridge.py"
     chmod 755 "${LIB_DIR}/clipboard_bridge.py"
-    sed "s#@LABEL@#${LABEL}#; s#@PYTHON@#$(command -v python3)#; s#@BRIDGE_DIR@#${LIB_DIR}#; s#@LOG@#${HOME}/Library/Logs/devbox-kit-clipboard-bridge.log#" \
-        "${REPO_DIR}/clipboard-bridge.plist.in" > "$PLIST"
+    render "s#@LABEL@#${LABEL}#g; s#@PYTHON@#$(command -v python3)#g; s#@BRIDGE_DIR@#${LIB_DIR}#g; s#@LOG@#${HOME}/Library/Logs/devbox-kit-clipboard-bridge.log#g" \
+        "${REPO_DIR}/clipboard-bridge.plist.in" "$PLIST"
     plutil -lint "$PLIST" >/dev/null || { echo "[ERROR] generated an invalid plist: $PLIST" >&2; exit 1; }
     launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$PLIST"
@@ -203,8 +209,8 @@ else
     cp "${REPO_DIR}/clipboard_bridge.py" "${LIB_DIR}/clipboard_bridge.py"
     cp "${REPO_DIR}/README.md"           "${LIB_DIR}/README.md"
     chmod 755 "${LIB_DIR}/clipboard_bridge.py"
-    sed "s#@BRIDGE_DIR@#${LIB_DIR}#; s#@PORT@#${PORT}#" "${REPO_DIR}/clipboard-bridge.socket.in" > "${UNIT_DIR}/clipboard-bridge.socket"
-    sed "s#@BRIDGE_DIR@#${LIB_DIR}#; s#@PORT@#${PORT}#" "${REPO_DIR}/clipboard-bridge.service.in" > "${UNIT_DIR}/clipboard-bridge.service"
+    render "s#@BRIDGE_DIR@#${LIB_DIR}#g; s#@PORT@#${PORT}#g" "${REPO_DIR}/clipboard-bridge.socket.in" "${UNIT_DIR}/clipboard-bridge.socket"
+    render "s#@BRIDGE_DIR@#${LIB_DIR}#g; s#@PORT@#${PORT}#g" "${REPO_DIR}/clipboard-bridge.service.in" "${UNIT_DIR}/clipboard-bridge.service"
     systemctl --user daemon-reload
     systemctl --user enable --now clipboard-bridge.socket >/dev/null 2>&1
     # Retire any instance still running the old ExecStart; the socket keeps listening, so the
@@ -213,8 +219,8 @@ else
     echo "    bridge snapshot: ${LIB_DIR}/clipboard_bridge.py ($(hash_of "${LIB_DIR}/clipboard_bridge.py"))"
     # A daily check, because nothing else would notice a Claude Code update changing the
     # commands it shells out to for a paste.
-    sed "s#@REPO_DIR@#${REPO_DIR}#; s#@BRIDGE_DIR@#${LIB_DIR}#; s#@HOST@#${REMOTE_HOST}#" \
-        "${REPO_DIR}/clipboard-bridge-verify.service.in" > "${UNIT_DIR}/clipboard-bridge-verify.service"
+    render "s#@REPO_DIR@#${REPO_DIR}#g; s#@BRIDGE_DIR@#${LIB_DIR}#g; s#@HOST@#${REMOTE_HOST}#g" \
+        "${REPO_DIR}/clipboard-bridge-verify.service.in" "${UNIT_DIR}/clipboard-bridge-verify.service"
     cp "${REPO_DIR}/clipboard-bridge-verify.timer.in" "${UNIT_DIR}/clipboard-bridge-verify.timer"
     systemctl --user daemon-reload
     systemctl --user enable --now clipboard-bridge-verify.timer >/dev/null 2>&1
